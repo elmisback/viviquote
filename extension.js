@@ -28,12 +28,7 @@ function activate(context) {
         when: "editorHasSelection"
     }
     */
-    const get_slice = (i, document) => {
-        const text = document.getText()
-        const start_i = text.indexOf(`// START ${i}\n`) + 11
-        const end_i = text.indexOf(`// END ${i}`)
-        return text.slice(start_i, end_i)
-    }
+    
     const get_free_vars_js = slice => {
         const acorn = require('acorn')
         const walk = require('acorn-walk')
@@ -113,7 +108,9 @@ function activate(context) {
         
         const free_vars = (() => {
             const state = { found: [], in_scope: [], free_vars: [] }
-            walk.recursive(acorn.parse(slice), state, functions)
+            walk.recursive(acorn.parse(slice, {
+                ecmaVersion: 2020
+            }), state, functions)
             return [...new Set(state.free_vars)]
         })()
         return free_vars
@@ -173,7 +170,7 @@ function activate(context) {
                 console.log(word)
                 const reversed = word.split('').reverse().join('');
                 // get lowest note number in the file
-                const numbers = [...(document.getText()).match(/\/\/ START \d+/g)].map(s => parseInt(s.split(' ')[2]))
+                const numbers = [...((document.getText()).match(/\/\/ START \d+/g) || [])].map(s => parseInt(s.split(' ')[2]))
                 console.log(numbers)
                 let k = 1
                 while (numbers.includes(k)) {
@@ -265,23 +262,34 @@ function activate(context) {
     const get_view = async (document) => {
         console.log('testing')
         const orig_fname = document.fileName.slice(0, document.fileName.length - EXT.length)
+        console.log({orig_fname})
         console.log(document.getText().slice(0, 10))
         const config = await (async () => {
-            try { return JSON.parse(await vscode.workspace.fs.readFile(vscode.Uri.parse(document.fileName))) } catch (e) { }
+            try { return JSON.parse(new TextDecoder().decode(await vscode.workspace.fs.readFile(vscode.Uri.parse(document.fileName)))) } catch (e) { }
         })() || {}
         
         const orig_doc = await vscode.workspace.openTextDocument(vscode.Uri.parse(orig_fname)).then(doc => doc)
-        
+        console.log({orig_doc})
         const inputs = []
         const watch_exprs = []
         const outputs = []
-
+        console.log(orig_doc.getText().match(/\/\/ START \d+/g))
         const new_slices = [...(orig_doc.getText()).match(/\/\/ START \d+/g)].map(s => s.split(' ')[2]).filter(s => !(s in config)).reduce((acc, e) => ({ ...acc, [e]: "" }), {})
-        console.log(new_slices)
+        console.log({new_slices})
+        console.log({config})
+        const MISSING_SLICE = "_MISSING"
         let html = Object.entries({ ...config, ...new_slices}).map(([k, v], i) => {
-            console.log()
             console.log(k, v)
+            const get_slice = (i, document) => {
+                const text = document.getText()
+                const idx = text.indexOf(`// START ${i}\n`)
+                if (idx == -1) return '_MISSING'
+                const start_i = idx + 11
+                const end_i = text.indexOf(`// END ${i}`)
+                return text.slice(start_i, end_i)
+            }
             const slice = get_slice(k, orig_doc)
+            if (slice == MISSING_SLICE) return ''  // HACK should probably deal with missing slices more cleanly, separate from output, etc.
             console.log('slice', slice)
             const free_vars = get_free_vars_js(slice).filter(v => (Function('return this')() || (42, eval)('this'))[v] === undefined)  // weird HACK ignores global variables
             console.log('free', free_vars)
