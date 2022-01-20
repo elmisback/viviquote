@@ -16,9 +16,13 @@ function activate(context) {
     // The command has been defined in the package.json file
     // Now provide the implementation of the command with registerCommand
     // The commandId parameter must match the command field in package.json
-    let a = 42;
-
-    /*
+	let a = 42;
+	
+	const OUTPUTS = {} // HACK global record of cell outputs
+											// this means the extension will only run on one file at a time for now
+											// and also we're only running top to bottom, no reactivity yet :(
+  
+	/*
         Register keybinding.
         TODO What about editorHasMultipleSelections ?
     
@@ -278,8 +282,8 @@ function activate(context) {
         console.log({new_slices})
         console.log({config})
         const MISSING_SLICE = "_MISSING"
-        let html = Object.entries({ ...config, ...new_slices}).map(([k, v], i) => {
-            console.log(k, v)
+        let html = Object.entries({ ...config, ...new_slices}).map(([slice_id, slice_text], i) => {
+            console.log(slice_id, slice_text)
             const get_slice = (i, document) => {
                 const text = document.getText()
                 const idx = text.indexOf(`// START ${i}\n`)
@@ -288,7 +292,7 @@ function activate(context) {
                 const end_i = text.indexOf(`// END ${i}`)
                 return text.slice(start_i, end_i)
             }
-            const slice = get_slice(k, orig_doc)
+            const slice = get_slice(slice_id, orig_doc)
             if (slice == MISSING_SLICE) return ''  // HACK should probably deal with missing slices more cleanly, separate from output, etc.
             console.log('slice', slice)
             const free_vars = get_free_vars_js(slice).filter(v => (Function('return this')() || (42, eval)('this'))[v] === undefined)  // weird HACK ignores global variables
@@ -303,19 +307,23 @@ function activate(context) {
                 watch_exprs.push(watch_expr)
                 const out = Function(...free_vars, slice + `; return ` + watch_expr)(...args)
                 //const out = eval(free_vars.map((name, i) => `let ${name} = ${args[i]} ;`).join('\n') + slice)
-                outputs.push(out)       // risky after eval
+							outputs.push(out)       // risky after eval
+							OUTPUTS[slice_id] = out  // HACK, see OUTPUTS definition for details
+							console.log({ slice_id, out, OUTPUTS })
+							// KNOWN BUG right now this will break things if run is called multiple times, still have to decide on handling for that...
                 return out
             }
             // Do the run
-            console.log('v', v)
-            
+            console.log('v', slice_text)
+					// const old_output_names = Object.keys(OUTPUTS).map(i => `slice_${i}`) // HACK assuming indices as names for now
+					// const old_output_values = Object.values(OUTPUTS)
             const output = (() => {
-                if (v.trim() == '') return "Please input an expression."
+                if (slice_text.trim() == '') return "Please input an expression."
                 try {
-                    return Function('run', 'return (' + v + ')')(run);
+                    return Function('run', 'return (' + slice_text + ')')(run);
                 } catch (e) {
                     try {
-                        return Function('run', v)(run);  // get the proper error
+                        return Function('run', ...Object.keys(OUTPUTS).map(i => `slice_${i}`), slice_text)(run, ...Object.values(OUTPUTS));  // get the proper error
                     } catch (e1) {
                         return 'Error: ' + e1
                     }
@@ -323,20 +331,21 @@ function activate(context) {
             })()
 
             // Zip inputs and outputs
-            const zipped = inputs[i]?.map(([name, value], i) => `${name} : ${value}`).map(s => '<li> ' + s).join('')
+					//const zipped = inputs[i]?.map(([name, value], i) => `${name} : ${value}`).map(s => '<li> ' + s).join('')
+					                        // <!--
+                        // <div class="run_output">
+                        //     <div id="inputs"> inputs: <ul>${zipped}</ul> </div>
+                        //     <div id="output_expr">watch expr: ${watch_exprs[i]}</div>
+                        //     <div id="output_value">output: ${outputs[i]}</div>  
+                        // </div>
+                        // -->
+					// HACK OUTPUTS below
             return `<div id="slice${i}" class="slice">
-                        <div id="index"> Slice ${k} </div>
+                        <div id="index"> Slice ${slice_id} </div>
                         <div id="free_vars"> <pre>run(${free_vars.join(', ')}, watch_string)</pre> </div>
-                        <div id="annotation"> <textarea style="width:100%">${v}</textarea> </div>
-                        <!--
-                        <div class="run_output">
-                            <div id="inputs"> inputs: <ul>${zipped}</ul> </div>
-                            <div id="output_expr">watch expr: ${watch_exprs[i]}</div>
-                            <div id="output_value">output: ${outputs[i]}</div>
-                        </div>
-                        -->
+                        <div id="annotation"> <textarea style="width:100%">${slice_text}</textarea> </div>
                         <div>
-                        ${output}
+                        ${OUTPUTS[slice_id]}
                         </div>
                     </div>
                     <hr>
